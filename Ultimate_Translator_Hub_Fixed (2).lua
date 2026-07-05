@@ -1,0 +1,581 @@
+﻿-- =============================================================================
+-- ULTIMATE GAME TRANSLATOR V3 [PRO GUI | ANIMATIONS | ENGLISH UI | FIXES]
+-- =============================================================================
+
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local MarketplaceService = game:GetService("MarketplaceService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Delta использует game:HttpGet вместо request
+local httprequest = nil
+
+local function tryGet(fn)
+    local ok, v = pcall(fn)
+    if ok and typeof(v) == "function" then return v end
+end
+
+httprequest = tryGet(function() return syn.request end)
+    or tryGet(function() return http.request end)
+    or tryGet(function() return http_request end)
+    or tryGet(function() return fluxus.request end)
+    or tryGet(function() return Delta.request end)
+    or tryGet(function() return request end)
+
+-- Fallback для Delta через game:HttpGet
+if not httprequest then
+    httprequest = function(t)
+        local success, body = pcall(function()
+            return game:HttpGet(t.Url)
+        end)
+        if success then
+            return {StatusCode = 200, Body = body}
+        end
+        return {StatusCode = 0, Body = ""}
+    end
+end
+
+-- =============================================================================
+-- 1. CACHE & FILE SYSTEM
+-- =============================================================================
+local GameName = tostring(game.PlaceId)
+pcall(function() GameName = MarketplaceService:GetProductInfo(game.PlaceId).Name end)
+GameName = GameName:gsub('[\\/:%*%?"<>|]', '')
+local CACHE_FILE = GameName .. "_Translations.json"
+
+local Translations = {}
+local ElementCache = {}
+local TranslationQueue = {}
+local IsTranslating = false
+local CurrentLanguage = "ru"
+
+if isfile(CACHE_FILE) then
+   pcall(function() Translations = HttpService:JSONDecode(readfile(CACHE_FILE)) end)
+end
+
+local function SaveCache()
+   pcall(function() writefile(CACHE_FILE, HttpService:JSONEncode(Translations)) end)
+end
+
+-- =============================================================================
+-- 2. LANGUAGE LIST
+-- =============================================================================
+local Languages = {
+   {Name="Russian", Code="ru", Flag="🇷🇺"}, {Name="English", Code="en", Flag="🇺🇸"}, {Name="German", Code="de", Flag="🇩🇪"}, {Name="French", Code="fr", Flag="🇫🇷"},
+   {Name="Spanish", Code="es", Flag="🇪🇸"}, {Name="Chinese (Simp)", Code="zh-CN", Flag="🇨🇳"}, {Name="Chinese (Trad)", Code="zh-TW", Flag="🇹🇼"}, {Name="Japanese", Code="ja", Flag="🇯🇵"},
+   {Name="Korean", Code="ko", Flag="🇰🇷"}, {Name="Italian", Code="it", Flag="🇮🇹"}, {Name="Portuguese", Code="pt", Flag="🇵🇹"}, {Name="Arabic", Code="ar", Flag="🇸🇦"},
+   {Name="Hindi", Code="hi", Flag="🇮🇳"}, {Name="Turkish", Code="tr", Flag="🇹🇷"}, {Name="Dutch", Code="nl", Flag="🇳🇱"}, {Name="Polish", Code="pl", Flag="🇵🇱"},
+   {Name="Swedish", Code="sv", Flag="🇸🇪"}, {Name="Greek", Code="el", Flag="🇬🇷"}, {Name="Thai", Code="th", Flag="🇹🇭"}, {Name="Vietnamese", Code="vi", Flag="🇻🇳"},
+   {Name="Ukrainian", Code="uk", Flag="🇺🇦"}, {Name="Czech", Code="cs", Flag="🇨🇿"}, {Name="Hungarian", Code="hu", Flag="🇭🇺"}, {Name="Finnish", Code="fi", Flag="🇫🇮"},
+   {Name="Danish", Code="da", Flag="🇩🇰"}, {Name="Norwegian", Code="no", Flag="🇳🇴"}, {Name="Romanian", Code="ro", Flag="🇷🇴"}, {Name="Bulgarian", Code="bg", Flag="🇧🇬"},
+   {Name="Hebrew", Code="he", Flag="🇮🇱"}, {Name="Indonesian", Code="id", Flag="🇮🇩"}, {Name="Malay", Code="ms", Flag="🇲🇾"}, {Name="Filipino", Code="tl", Flag="🇵🇭"},
+   {Name="Croatian", Code="hr", Flag="🇭🇷"}, {Name="Slovak", Code="sk", Flag="🇸🇰"}, {Name="Latvian", Code="lv", Flag="🇱🇻"}, {Name="Lithuanian", Code="lt", Flag="🇱🇹"},
+   {Name="Estonian", Code="et", Flag="🇪🇪"}, {Name="Catalan", Code="ca", Flag="🇦🇩"}, {Name="Serbian", Code="sr", Flag="🇷🇸"}, {Name="Albanian", Code="sq", Flag="🇦🇱"},
+   {Name="Macedonian", Code="mk", Flag="🇲🇰"}, {Name="Belarusian", Code="be", Flag="🇧🇾"}, {Name="Kazakh", Code="kk", Flag="🇰🇿"}, {Name="Uzbek", Code="uz", Flag="🇺🇿"},
+   {Name="Azerbaijani", Code="az", Flag="🇦🇿"}, {Name="Georgian", Code="ka", Flag="🇬🇪"}, {Name="Armenian", Code="hy", Flag="🇦🇲"}, {Name="Persian", Code="fa", Flag="🇮🇷"},
+   {Name="Urdu", Code="ur", Flag="🇵🇰"}, {Name="Afrikaans", Code="af", Flag="🇿🇦"}, {Name="Icelandic", Code="is", Flag="🇮🇸"}, {Name="Irish", Code="ga", Flag="🇮🇪"}
+}
+
+local function GetCurrentLangDisplay()
+   for _, l in ipairs(Languages) do
+       if l.Code == CurrentLanguage then return l.Flag .. " " .. l.Name end
+   end
+   return "🇷🇺 Russian"
+end
+
+-- =============================================================================
+-- 3. ANIMATION HELPERS
+-- =============================================================================
+local function CreateTween(obj, props, time, style)
+   local tw = TweenService:Create(obj, TweenInfo.new(time or 0.3, style or Enum.EasingStyle.Quart, Enum.EasingDirection.Out), props)
+   tw:Play()
+   return tw
+end
+
+local function ApplyButtonAnimations(btn, normalColor, hoverColor)
+   btn.MouseEnter:Connect(function() CreateTween(btn, {BackgroundColor3 = hoverColor}, 0.2) end)
+   btn.MouseLeave:Connect(function() CreateTween(btn, {BackgroundColor3 = normalColor}, 0.2) end)
+   btn.MouseButton1Down:Connect(function() CreateTween(btn, {Size = UDim2.new(btn.Size.X.Scale, btn.Size.X.Offset - 4, btn.Size.Y.Scale, btn.Size.Y.Offset - 4)}, 0.1) end)
+   btn.MouseButton1Up:Connect(function() CreateTween(btn, {Size = UDim2.new(btn.Size.X.Scale, btn.Size.X.Offset + 4, btn.Size.Y.Scale, btn.Size.Y.Offset + 4)}, 0.1, Enum.EasingStyle.Back) end)
+end
+
+-- =============================================================================
+-- 4. GUI CREATION
+-- =============================================================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "UltimateTranslatorV3"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() ScreenGui.Parent = CoreGui end)
+
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.Size = UDim2.new(0, 380, 0, 210)
+MainFrame.Position = UDim2.new(0.5, -190, 0.5, -105)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.ClipsDescendants = false -- VITAL FOR DROPDOWN TO OVERLAP
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+
+-- Header
+local Header = Instance.new("Frame", MainFrame)
+Header.Size = UDim2.new(1, 0, 0, 45)
+Header.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+Header.ZIndex = 2
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 10)
+local HeaderFix = Instance.new("Frame", Header)
+HeaderFix.Size = UDim2.new(1, 0, 0, 10)
+HeaderFix.Position = UDim2.new(0, 0, 1, -10)
+HeaderFix.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+HeaderFix.BorderSizePixel = 0
+HeaderFix.ZIndex = 2
+
+local Title = Instance.new("TextLabel", Header)
+Title.Size = UDim2.new(1, -90, 1, 0)
+Title.Position = UDim2.new(0, 15, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "UNIVERSAL TRANSLATOR"
+Title.TextColor3 = Color3.fromRGB(240, 240, 240)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.ZIndex = 3
+
+local MinimizeBtn = Instance.new("TextButton", Header)
+MinimizeBtn.Size = UDim2.new(0, 45, 1, 0)
+MinimizeBtn.Position = UDim2.new(1, -90, 0, 0)
+MinimizeBtn.BackgroundTransparency = 1
+MinimizeBtn.Text = "—"
+MinimizeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 14
+MinimizeBtn.ZIndex = 3
+
+local CloseBtn = Instance.new("TextButton", Header)
+CloseBtn.Size = UDim2.new(0, 45, 1, 0)
+CloseBtn.Position = UDim2.new(1, -45, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+CloseBtn.ZIndex = 3
+
+-- Content Area
+local ContentFrame = Instance.new("Frame", MainFrame)
+ContentFrame.Size = UDim2.new(1, 0, 1, -45)
+ContentFrame.Position = UDim2.new(0, 0, 0, 45)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.ZIndex = 1
+
+local LangBtn = Instance.new("TextButton", ContentFrame)
+LangBtn.Size = UDim2.new(0.9, 0, 0, 45)
+LangBtn.Position = UDim2.new(0.05, 0, 0, 20)
+LangBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+LangBtn.Text = "Target: " .. GetCurrentLangDisplay() .. "  ▼"
+LangBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+LangBtn.Font = Enum.Font.GothamBold
+LangBtn.TextSize = 14
+LangBtn.ZIndex = 2
+Instance.new("UICorner", LangBtn).CornerRadius = UDim.new(0, 8)
+ApplyButtonAnimations(LangBtn, Color3.fromRGB(35, 35, 45), Color3.fromRGB(45, 45, 55))
+
+-- Control Buttons Container (For animation)
+local BtnContainer = Instance.new("Frame", ContentFrame)
+BtnContainer.Size = UDim2.new(1, 0, 0, 50)
+BtnContainer.Position = UDim2.new(0, 0, 0, 85)
+BtnContainer.BackgroundTransparency = 1
+
+local StartBtn = Instance.new("TextButton", BtnContainer)
+StartBtn.Size = UDim2.new(0.42, 0, 0, 45)
+StartBtn.Position = UDim2.new(0.05, 0, 0, 0)
+StartBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+StartBtn.Text = "START"
+StartBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+StartBtn.Font = Enum.Font.GothamBold
+StartBtn.TextSize = 13
+StartBtn.ZIndex = 2
+Instance.new("UICorner", StartBtn).CornerRadius = UDim.new(0, 8)
+ApplyButtonAnimations(StartBtn, Color3.fromRGB(46, 204, 113), Color3.fromRGB(56, 224, 133))
+
+local UntransBtn = Instance.new("TextButton", BtnContainer)
+UntransBtn.Size = UDim2.new(0.42, 0, 0, 45)
+UntransBtn.Position = UDim2.new(0.53, 0, 0, 0)
+UntransBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+UntransBtn.Text = "UNTRANSLATED"
+UntransBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+UntransBtn.Font = Enum.Font.GothamBold
+UntransBtn.TextSize = 13
+UntransBtn.ZIndex = 2
+Instance.new("UICorner", UntransBtn).CornerRadius = UDim.new(0, 8)
+ApplyButtonAnimations(UntransBtn, Color3.fromRGB(231, 76, 60), Color3.fromRGB(255, 96, 80))
+
+-- Confirmation Buttons
+local YesBtn = Instance.new("TextButton", BtnContainer)
+YesBtn.Size = UDim2.new(0.42, 0, 0, 45)
+YesBtn.Position = UDim2.new(0.05, 0, 0, 20) -- Start lower for animation
+YesBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+YesBtn.Text = "Yes, I'm sure (5)"
+YesBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+YesBtn.Font = Enum.Font.GothamBold
+YesBtn.TextSize = 13
+YesBtn.Visible = false
+YesBtn.ZIndex = 2
+Instance.new("UICorner", YesBtn).CornerRadius = UDim.new(0, 8)
+
+local NoBtn = Instance.new("TextButton", BtnContainer)
+NoBtn.Size = UDim2.new(0.42, 0, 0, 45)
+NoBtn.Position = UDim2.new(0.53, 0, 0, 20)
+NoBtn.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+NoBtn.Text = "No, cancel"
+NoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+NoBtn.Font = Enum.Font.GothamBold
+NoBtn.TextSize = 13
+NoBtn.Visible = false
+NoBtn.ZIndex = 2
+Instance.new("UICorner", NoBtn).CornerRadius = UDim.new(0, 8)
+ApplyButtonAnimations(NoBtn, Color3.fromRGB(231, 76, 60), Color3.fromRGB(255, 96, 80))
+
+-- =============================================================================
+-- 5. DROPDOWN MENU (OVERLAPPING FIX)
+-- =============================================================================
+local DropdownFrame = Instance.new("Frame", MainFrame)
+DropdownFrame.Size = UDim2.new(0.9, 0, 0, 0)
+DropdownFrame.Position = UDim2.new(0.05, 0, 0, 115) 
+DropdownFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+DropdownFrame.ZIndex = 10
+DropdownFrame.ClipsDescendants = true
+DropdownFrame.Visible = false
+Instance.new("UICorner", DropdownFrame).CornerRadius = UDim.new(0, 8)
+local DropStroke = Instance.new("UIStroke", DropdownFrame)
+DropStroke.Color = Color3.fromRGB(60, 60, 70)
+DropStroke.Thickness = 1.5
+
+local SearchBox = Instance.new("TextBox", DropdownFrame)
+SearchBox.Size = UDim2.new(0.94, 0, 0, 35)
+SearchBox.Position = UDim2.new(0.03, 0, 0, 10)
+SearchBox.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+SearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+SearchBox.PlaceholderText = "Search language..."
+SearchBox.Font = Enum.Font.Gotham
+SearchBox.TextSize = 13
+SearchBox.ZIndex = 11
+Instance.new("UICorner", SearchBox).CornerRadius = UDim.new(0, 6)
+Instance.new("UIPadding", SearchBox).PaddingLeft = UDim.new(0, 10)
+
+local ScrollFrame = Instance.new("ScrollingFrame", DropdownFrame)
+ScrollFrame.Size = UDim2.new(0.94, 0, 1, -60)
+ScrollFrame.Position = UDim2.new(0.03, 0, 0, 55)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.ScrollBarThickness = 3
+ScrollFrame.ZIndex = 11
+local ListLayout = Instance.new("UIListLayout", ScrollFrame)
+ListLayout.Padding = UDim.new(0, 4)
+
+-- FIX: Dynamic Scroll Size
+ListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+   ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+local dropOpen = false
+local function ToggleDropdown()
+   dropOpen = not dropOpen
+   if dropOpen then
+       DropdownFrame.Visible = true
+       CreateTween(DropdownFrame, {Size = UDim2.new(0.9, 0, 0, 260)}, 0.3, Enum.EasingStyle.Back)
+       LangBtn.Text = "Target: " .. GetCurrentLangDisplay() .. "  ▲"
+   else
+       CreateTween(DropdownFrame, {Size = UDim2.new(0.9, 0, 0, 0)}, 0.2, Enum.EasingStyle.Quad).Completed:Connect(function()
+           if not dropOpen then DropdownFrame.Visible = false end
+       end)
+       LangBtn.Text = "Target: " .. GetCurrentLangDisplay() .. "  ▼"
+   end
+end
+LangBtn.MouseButton1Click:Connect(ToggleDropdown)
+
+local function PopulateLanguages(filterText)
+   for _, child in ipairs(ScrollFrame:GetChildren()) do
+       if child:IsA("TextButton") then child:Destroy() end
+   end
+   
+   for i, lang in ipairs(Languages) do
+       if not filterText or filterText == "" or lang.Name:lower():find(filterText:lower()) then
+           local btn = Instance.new("TextButton", ScrollFrame)
+           btn.Size = UDim2.new(1, -8, 0, 32)
+           btn.BackgroundColor3 = lang.Code == CurrentLanguage and Color3.fromRGB(41, 128, 185) or Color3.fromRGB(30, 30, 38)
+           btn.Text = "  " .. lang.Flag .. " " .. lang.Name
+           btn.TextColor3 = Color3.fromRGB(230, 230, 230)
+           btn.Font = Enum.Font.Gotham
+           btn.TextSize = 13
+           btn.TextXAlignment = Enum.TextXAlignment.Left
+           btn.ZIndex = 12
+           Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+           
+           btn.MouseButton1Click:Connect(function()
+               CurrentLanguage = lang.Code
+               ToggleDropdown()
+               PopulateLanguages(SearchBox.Text)
+           end)
+       end
+   end
+end
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function() PopulateLanguages(SearchBox.Text) end)
+PopulateLanguages()
+
+-- =============================================================================
+-- 6. WINDOW LOGIC (DRAG & MINIMIZE)
+-- =============================================================================
+local dragging, dragInput, dragStart, startPos
+Header.InputBegan:Connect(function(input)
+   if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+       dragging = true; dragStart = input.Position; startPos = MainFrame.Position
+       input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+   end
+end)
+Header.InputChanged:Connect(function(input)
+   if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+end)
+UserInputService.InputChanged:Connect(function(input)
+   if input == dragInput and dragging then
+       local delta = input.Position - dragStart
+       MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+   end
+end)
+
+local minimized = false
+MinimizeBtn.MouseButton1Click:Connect(function()
+   minimized = not minimized
+   if dropOpen then ToggleDropdown() end 
+   
+   if minimized then
+       CreateTween(ContentFrame, {GroupTransparency = 1}, 0.2)
+       task.wait(0.1)
+       ContentFrame.Visible = false
+       CreateTween(MainFrame, {Size = UDim2.new(0, 380, 0, 45)}, 0.3)
+       MinimizeBtn.Text = "+"
+   else
+       CreateTween(MainFrame, {Size = UDim2.new(0, 380, 0, 210)}, 0.3)
+       task.wait(0.2)
+       ContentFrame.Visible = true
+       CreateTween(ContentFrame, {GroupTransparency = 0}, 0.2)
+       MinimizeBtn.Text = "—"
+   end
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+   CreateTween(MainFrame, {Size = UDim2.new(0, 0, 0, 0), BackgroundTransparency = 1}, 0.4)
+   task.wait(0.4); ScreenGui:Destroy()
+end)
+
+-- Initial Animation
+MainFrame.Size = UDim2.new(0, 380, 0, 45)
+ContentFrame.Visible = false
+CreateTween(MainFrame, {Size = UDim2.new(0, 380, 0, 210)}, 0.5, Enum.EasingStyle.Back).Completed:Connect(function()
+   ContentFrame.Visible = true
+   CreateTween(ContentFrame, {BackgroundTransparency = 1}, 0.2)
+end)
+
+-- =============================================================================
+-- 7. TRANSLATION ENGINE & ROBUST HTTP
+-- =============================================================================
+local function NeedsTranslation(text)
+   if type(text) ~= "string" or text == "" or #text < 2 then return false end
+   if not text:match("[%a]") then return false end
+   return true
+end
+
+local function AddToQueue(originalText)
+   if not Translations[originalText] and NeedsTranslation(originalText) then
+       for _, v in ipairs(TranslationQueue) do if v == originalText then return end end
+       table.insert(TranslationQueue, originalText)
+   end
+end
+
+-- Robust translation background loop
+task.spawn(function()
+   while true do
+       if #TranslationQueue > 0 then
+           local textToTranslate = table.remove(TranslationQueue, 1)
+           if not Translations[textToTranslate] then
+               local url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="..CurrentLanguage.."&dt=t&q="..HttpService:UrlEncode(textToTranslate)
+               
+               -- Extra safe HTTP Call
+               local success, response = pcall(function() return httprequest({Url = url, Method = "GET"}) end)
+               
+               if success and response and response.StatusCode == 200 then
+                   local decodeSuccess, data = pcall(function() return HttpService:JSONDecode(response.Body) end)
+                   
+                   if decodeSuccess and data and data[1] then
+                       local fullTrans = ""
+                       for _, part in ipairs(data[1]) do 
+                           if part[1] then fullTrans = fullTrans .. part[1] end 
+                       end
+                       
+                       Translations[textToTranslate] = fullTrans
+                       SaveCache()
+                       
+                       if IsTranslating then
+                           for obj, cData in pairs(ElementCache) do
+                               if cData.Original == textToTranslate and obj.Parent then
+                                   cData.IsUpdating = true
+                                   pcall(function() obj.Text = fullTrans end)
+                                   cData.IsUpdating = false
+                               end
+                           end
+                       end
+                   end
+               end
+               task.wait(0.25) -- Safe rate limit
+           end
+       else
+           task.wait(0.5)
+       end
+   end
+end)
+
+local function HookElement(obj)
+   if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+       if ElementCache[obj] or obj:IsDescendantOf(ScreenGui) then return end
+       
+       local origText = obj.Text
+       ElementCache[obj] = {Original = origText, IsUpdating = false}
+       AddToQueue(origText)
+
+       if IsTranslating and Translations[origText] then
+           ElementCache[obj].IsUpdating = true
+           pcall(function() obj.Text = Translations[origText] end)
+           ElementCache[obj].IsUpdating = false
+       end
+
+       obj:GetPropertyChangedSignal("Text"):Connect(function()
+           local cData = ElementCache[obj]
+           if cData.IsUpdating then return end 
+           
+           local newText = obj.Text
+           if not IsTranslating then
+               cData.Original = newText
+               AddToQueue(newText)
+               return
+           end
+
+           local isAlreadyTranslated = false
+           for _, v in pairs(Translations) do
+               if v == newText then isAlreadyTranslated = true; break end
+           end
+           if isAlreadyTranslated then return end
+
+           cData.Original = newText
+           if Translations[newText] then
+               cData.IsUpdating = true
+               pcall(function() obj.Text = Translations[newText] end)
+               cData.IsUpdating = false
+           else
+               AddToQueue(newText)
+           end
+       end)
+   end
+end
+
+-- =============================================================================
+-- 8. CONFIRMATION LOGIC (YES / NO / START)
+-- =============================================================================
+local isConfirming = false
+
+local function SwapButtons(showConfirm)
+   if showConfirm then
+       CreateTween(StartBtn, {TextTransparency = 1}, 0.2)
+       CreateTween(UntransBtn, {TextTransparency = 1}, 0.2)
+       task.wait(0.1)
+       StartBtn.Visible = false
+       UntransBtn.Visible = false
+       
+       YesBtn.Position = UDim2.new(0.05, 0, 0, 20)
+       NoBtn.Position = UDim2.new(0.53, 0, 0, 20)
+       YesBtn.Visible = true
+       NoBtn.Visible = true
+       CreateTween(YesBtn, {Position = UDim2.new(0.05, 0, 0, 0)}, 0.3, Enum.EasingStyle.Back)
+       CreateTween(NoBtn, {Position = UDim2.new(0.53, 0, 0, 0)}, 0.3, Enum.EasingStyle.Back)
+   else
+       CreateTween(YesBtn, {Position = UDim2.new(0.05, 0, 0, 20), TextTransparency = 1}, 0.2)
+       CreateTween(NoBtn, {Position = UDim2.new(0.53, 0, 0, 20), TextTransparency = 1}, 0.2)
+       task.wait(0.2)
+       YesBtn.Visible = false
+       NoBtn.Visible = false
+       YesBtn.TextTransparency = 0
+       NoBtn.TextTransparency = 0
+       
+       StartBtn.Visible = true
+       UntransBtn.Visible = true
+       CreateTween(StartBtn, {TextTransparency = 0}, 0.2)
+       CreateTween(UntransBtn, {TextTransparency = 0}, 0.2)
+   end
+end
+
+StartBtn.MouseButton1Click:Connect(function()
+   if IsTranslating or isConfirming then return end
+   isConfirming = true
+   
+   SwapButtons(true)
+   
+   YesBtn.AutoButtonColor = false
+   YesBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+   
+   for i = 5, 1, -1 do
+       if not isConfirming then return end 
+       YesBtn.Text = "Yes, I'm sure (" .. i .. ")"
+       task.wait(1)
+   end
+   
+   if not isConfirming then return end
+   YesBtn.Text = "Yes, I'm sure"
+   YesBtn.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+   YesBtn.AutoButtonColor = true
+   
+   -- Assign color animation dynamically after unlock
+   ApplyButtonAnimations(YesBtn, Color3.fromRGB(46, 204, 113), Color3.fromRGB(56, 224, 133))
+end)
+
+YesBtn.MouseButton1Click:Connect(function()
+   if not isConfirming or YesBtn.Text:find("%(") then return end 
+   
+   IsTranslating = true
+   isConfirming = false
+   SwapButtons(false)
+   
+   for obj, cData in pairs(ElementCache) do
+       if obj.Parent and Translations[cData.Original] then
+           cData.IsUpdating = true
+           pcall(function() obj.Text = Translations[cData.Original] end)
+           cData.IsUpdating = false
+       end
+   end
+end)
+
+NoBtn.MouseButton1Click:Connect(function()
+   isConfirming = false
+   SwapButtons(false)
+end)
+
+UntransBtn.MouseButton1Click:Connect(function()
+   IsTranslating = false
+   for obj, cData in pairs(ElementCache) do
+       if obj.Parent then
+           cData.IsUpdating = true
+           pcall(function() obj.Text = cData.Original end)
+           cData.IsUpdating = false
+       end
+   end
+end)
+
+-- =============================================================================
+-- 9. INITIALIZATION
+-- =============================================================================
+game.DescendantAdded:Connect(HookElement)
+
+task.spawn(function()
+   local descendants = game:GetDescendants()
+   for i, obj in ipairs(descendants) do
+       HookElement(obj)
+       if i % 800 == 0 then task.wait() end 
+   end
+end)
