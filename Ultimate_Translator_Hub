@@ -8,10 +8,12 @@ local CoreGui = game:GetService("CoreGui")
 local MarketplaceService = game:GetService("MarketplaceService")
 local UserInputService = game:GetService("UserInputService")
 
-local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-if not httprequest then
-   warn("HTTP requests are not supported by your exploit.")
-   return
+-- Универсальный запрос, который Delta поймет
+local function httprequest(params)
+    return {
+        StatusCode = 200,
+        Body = game:HttpGet(params.Url)
+    }
 end
 
 -- =============================================================================
